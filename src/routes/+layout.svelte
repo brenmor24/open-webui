@@ -53,7 +53,13 @@
 	import '../app.css';
 	import 'tippy.js/dist/tippy.css';
 
-	import { executeToolServer, getBackendConfig, getModels, getVersion } from '$lib/apis';
+	import {
+		executeToolServer,
+		getBackendConfig,
+		getModels,
+		getVersion,
+		isAuthProxyRedirect
+	} from '$lib/apis';
 	import { getSessionUser, updateUserTimezone, userSignOut } from '$lib/apis/auths';
 	import { getAllTags } from '$lib/apis/chats';
 	import { chatCompletion } from '$lib/apis/openai';
@@ -981,17 +987,32 @@
 		return new Headers();
 	};
 
-	const isAuthenticatedBackendFetch = (input, init) => {
+	const isBackendFetch = (input) => {
 		try {
 			const requestUrl = resolveFetchUrl(input);
 			const backendOrigin = new URL(WEBUI_BASE_URL || '/', window.location.origin).origin;
 
-			return (
-				requestUrl.origin === backendOrigin && resolveFetchHeaders(input, init).has('authorization')
-			);
+			return requestUrl.origin === backendOrigin;
 		} catch {
 			return false;
 		}
+	};
+
+	const isAuthenticatedBackendFetch = (input, init) => {
+		try {
+			return isBackendFetch(input) && resolveFetchHeaders(input, init).has('authorization');
+		} catch {
+			return false;
+		}
+	};
+
+	const redirectToAuthProxy = () => {
+		if (isAuthRedirectInProgress) {
+			return;
+		}
+
+		isAuthRedirectInProgress = true;
+		window.location.href = `${WEBUI_BASE_URL}/api/reauth`;
 	};
 
 	const clearExpiredSession = () => {
@@ -1144,7 +1165,21 @@
 	onMount(async () => {
 		const originalFetch = window.fetch.bind(window);
 		window.fetch = async (input, init) => {
-			const response = await originalFetch(input, init);
+			let response;
+			try {
+				response = await originalFetch(input, init);
+			} catch (error) {
+				if (
+					isAuthRedirectInProgress ||
+					(error instanceof TypeError &&
+						isBackendFetch(input) &&
+						(await isAuthProxyRedirect(originalFetch)))
+				) {
+					redirectToAuthProxy();
+					return new Promise(() => {});
+				}
+				throw error;
+			}
 
 			if (
 				response.status === 401 &&
@@ -1321,9 +1356,7 @@
 			console.log('Backend config:', backendConfig);
 		} catch (error) {
 			if (error?.authRedirect) {
-				// Forward-auth proxy is redirecting to an external login page.
-				// Full-page navigation lets the browser follow the redirect natively.
-				window.location.href = '/';
+				redirectToAuthProxy();
 				return;
 			}
 			console.error('Error loading backend config:', error);

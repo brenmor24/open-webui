@@ -1471,6 +1471,20 @@ export const getUsage = async (token: string = '') => {
 	return res;
 };
 
+export const isAuthProxyRedirect = async (fetchFn: typeof fetch = fetch) => {
+	try {
+		const probeRes = await fetchFn(`${WEBUI_BASE_URL}/api/config`, {
+			method: 'GET',
+			credentials: 'include',
+			redirect: 'manual',
+			headers: { 'Content-Type': 'application/json' }
+		});
+		return probeRes.type === 'opaqueredirect' || (probeRes.status >= 300 && probeRes.status < 400);
+	} catch {
+		return false;
+	}
+};
+
 export const getBackendConfig = async () => {
 	let error = null;
 
@@ -1492,31 +1506,8 @@ export const getBackendConfig = async () => {
 		});
 
 	if (error) {
-		// When a forward-auth proxy (e.g. Authentik/Traefik) intercepts the
-		// request and redirects to an external login page, the browser blocks
-		// the cross-origin redirect for fetch() and throws a TypeError.
-		// Detect this by re-fetching with redirect:"manual" — if the server
-		// responded with a redirect, the probe returns an opaque redirect
-		// response instead of throwing, confirming the backend is alive but
-		// an auth proxy is intercepting.
-		if (error instanceof TypeError) {
-			try {
-				const probeRes = await fetch(`${WEBUI_BASE_URL}/api/config`, {
-					method: 'GET',
-					credentials: 'include',
-					redirect: 'manual',
-					headers: { 'Content-Type': 'application/json' }
-				});
-				if (
-					probeRes.type === 'opaqueredirect' ||
-					(probeRes.status >= 300 && probeRes.status < 400)
-				) {
-					throw { authRedirect: true };
-				}
-			} catch (probeErr: any) {
-				if (probeErr?.authRedirect) throw probeErr;
-				// Probe also failed — genuine network/backend issue
-			}
+		if (error instanceof TypeError && (await isAuthProxyRedirect())) {
+			throw { authRedirect: true };
 		}
 		throw error;
 	}

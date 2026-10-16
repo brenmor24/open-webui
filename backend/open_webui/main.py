@@ -24,7 +24,7 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import text
@@ -2679,6 +2679,11 @@ async def get_app_version():
         'version': VERSION,
         'deployment_id': DEPLOYMENT_ID,
     }
+
+
+@app.get('/api/reauth')
+async def reauth_redirect():
+    return RedirectResponse(url='/')
 
 
 @app.get('/api/version/updates')
